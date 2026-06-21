@@ -1,6 +1,15 @@
-const STORAGE_KEY = "thai-expense-transactions-v1";
-const API_URL_KEY = "thai-expense-api-url-v1";
-const API_TOKEN_KEY = "thai-expense-api-token-v1";
+// ============================================================
+// ตั้งค่าก่อนใช้งานจริง
+// 1) Deploy Code.gs เป็น Web App
+// 2) นำ Web App URL ที่ลงท้ายด้วย /exec มาใส่ใน API_URL
+// 3) ตั้ง TOKEN ให้ตรงกับ TOKEN ใน Code.gs
+// ============================================================
+const CONFIG = {
+  API_URL: "https://script.google.com/macros/s/AKfycbyofMEquMUwuDVjUm8u05eW_ug6lMWcTZZ3sxn4cNdK0-nBXSej31AwE7_66xKqRkW8Hg/exec",
+  TOKEN: "my-secret-token-123"
+};
+
+const STORAGE_KEY = "thai-expense-transactions-v2";
 
 const THAI_MONTHS = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -33,16 +42,16 @@ const state = {
   loading: false,
   lastError: "",
   editingId: null,
-  apiUrl: localStorage.getItem(API_URL_KEY) || "",
-  token: localStorage.getItem(API_TOKEN_KEY) || "",
   form: makeDefaultForm()
 };
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
-const settingsDialog = document.getElementById("settingsDialog");
-const settingApiUrl = document.getElementById("settingApiUrl");
-const settingToken = document.getElementById("settingToken");
+
+function isApiConfigured() {
+  const url = String(CONFIG.API_URL || "").trim();
+  return Boolean(url && !url.includes("PASTE_APPS_SCRIPT_WEB_APP_URL_HERE") && /^https?:\/\//i.test(url));
+}
 
 function makeDefaultForm() {
   return {
@@ -67,7 +76,7 @@ function formatDateInput(date) {
 
 function parseDate(value) {
   const [year, month, day] = String(value || "").split("-").map(Number);
-  return new Date(year, (month || 1) - 1, day || 1);
+  return new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1);
 }
 
 function monthTitle(monthKey) {
@@ -93,6 +102,11 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function createId() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  return `tx_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function readLocalTransactions() {
@@ -125,11 +139,6 @@ function normalizeTransactions(items) {
     .filter(item => item.amount > 0);
 }
 
-function createId() {
-  if (crypto && crypto.randomUUID) return crypto.randomUUID();
-  return `tx_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
 function monthTransactions() {
   return state.transactions.filter(tx => tx.date.startsWith(state.selectedMonth));
 }
@@ -149,7 +158,11 @@ function summarize(items) {
 }
 
 function getCategoryMeta(category, type = "expense") {
-  return CATEGORIES[type].find(item => item.name === category) || { name: category || "อื่นๆ", icon: type === "income" ? "💵" : "●", color: "#64748b" };
+  return CATEGORIES[type].find(item => item.name === category) || {
+    name: category || "อื่นๆ",
+    icon: type === "income" ? "💵" : "●",
+    color: "#64748b"
+  };
 }
 
 function transactionTitle(tx) {
@@ -191,7 +204,7 @@ async function loadData() {
   state.transactions = readLocalTransactions();
   render();
 
-  if (!state.apiUrl) {
+  if (!isApiConfigured()) {
     state.loading = false;
     render();
     return;
@@ -210,32 +223,57 @@ async function loadData() {
   }
 }
 
-async function apiRequest(action, payload = {}) {
-  if (!state.apiUrl) throw new Error("ยังไม่ได้ตั้งค่า URL");
+function apiRequest(action, payload = {}) {
+  if (!isApiConfigured()) {
+    return Promise.reject(new Error("ยังไม่ได้ใส่ Apps Script URL ใน script.js"));
+  }
 
-  const params = new URLSearchParams();
-  params.set("action", action);
-  params.set("token", state.token);
-  params.set("payload", JSON.stringify(payload));
+  return new Promise((resolve, reject) => {
+    const callbackName = `thaiExpenseCallback_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const url = new URL(CONFIG.API_URL.trim());
+    url.searchParams.set("action", action);
+    url.searchParams.set("token", CONFIG.TOKEN || "");
+    url.searchParams.set("payload", JSON.stringify(payload));
+    url.searchParams.set("callback", callbackName);
+    url.searchParams.set("_", String(Date.now()));
 
-  const response = await fetch(state.apiUrl, {
-    method: "POST",
-    body: params,
-    redirect: "follow"
+    const script = document.createElement("script");
+    let settled = false;
+
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+      clearTimeout(timer);
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("หมดเวลาการเชื่อมต่อ Apps Script"));
+    }, 20000);
+
+    window[callbackName] = json => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (!json || json.ok === false) {
+        reject(new Error(json?.error || "Apps Script ส่งคำตอบไม่สำเร็จ"));
+        return;
+      }
+      resolve(json);
+    };
+
+    script.onerror = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("โหลด Apps Script ไม่สำเร็จ โปรดตรวจสอบ Web App URL"));
+    };
+
+    script.src = url.toString();
+    document.body.appendChild(script);
   });
-
-  const text = await response.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error("คำตอบจาก Apps Script ไม่ใช่ JSON โปรดตรวจสอบการ Deploy");
-  }
-
-  if (!response.ok || json.ok === false) {
-    throw new Error(json.error || `HTTP ${response.status}`);
-  }
-  return json;
 }
 
 function render() {
@@ -268,7 +306,7 @@ function renderHome() {
           <h1 class="page-title">หน้าแรก</h1>
           <button class="month-pill" type="button" data-action="go-list">${monthTitle(state.selectedMonth)}⌄</button>
         </div>
-        <button class="icon-button" type="button" data-action="open-settings" aria-label="ตั้งค่า">⚙</button>
+        <button class="icon-button" type="button" data-action="reload" aria-label="โหลดใหม่">↻</button>
       </header>
 
       ${renderNotice()}
@@ -309,19 +347,32 @@ function renderHome() {
 }
 
 function renderNotice() {
-  if (state.loading) return renderLoading("กำลังโหลดข้อมูล", "กำลังดึงรายการล่าสุด");
-  if (state.lastError) return renderError(state.lastError);
-  if (!state.apiUrl) {
+  if (state.loading) return renderLoading("กำลังโหลดข้อมูล", "กำลังดึงรายการล่าสุดจาก Google Sheet");
+
+  if (state.lastError) {
     return `
-      <section class="card quick-card">
+      <section class="card notice-card error">
         <div>
-          <strong>กำลังใช้ข้อมูลในเครื่อง</strong>
-          <div class="muted small">ตั้งค่า Apps Script เพื่อบันทึกลง Google Sheet</div>
+          <strong>พบปัญหาการเชื่อมต่อ</strong>
+          <div class="muted small">${escapeHtml(state.lastError)}</div>
+          <div class="muted small">ตอนนี้ระบบแสดงข้อมูลสำรองในเครื่องนี้ก่อน</div>
         </div>
-        <button class="secondary-button" type="button" data-action="open-settings">ตั้งค่า</button>
       </section>
     `;
   }
+
+  if (!isApiConfigured()) {
+    return `
+      <section class="card notice-card">
+        <div>
+          <strong>ยังไม่ได้ฝัง Apps Script URL</strong>
+          <div class="muted small">แก้ค่า CONFIG.API_URL และ CONFIG.TOKEN ในไฟล์ script.js แล้ว push ขึ้น GitHub</div>
+          <div class="muted small">ระหว่างนี้ระบบจะเก็บข้อมูลในเครื่องนี้ก่อน</div>
+        </div>
+      </section>
+    `;
+  }
+
   return "";
 }
 
@@ -585,16 +636,6 @@ function renderLoading(title, detail) {
   `;
 }
 
-function renderError(message) {
-  return `
-    <section class="error-state">
-      <span class="emoji">⚠️</span>
-      <strong>พบปัญหา</strong>
-      <div class="muted small">${escapeHtml(message)}</div>
-    </section>
-  `;
-}
-
 function normalizeAmount(value) {
   const cleaned = String(value || "").replace(/,/g, "").trim();
   return Number(cleaned);
@@ -647,7 +688,7 @@ async function saveTransaction() {
   };
 
   try {
-    if (state.apiUrl) {
+    if (isApiConfigured()) {
       await apiRequest(state.editingId ? "update" : "create", { transaction });
       await loadData();
     } else {
@@ -675,7 +716,7 @@ async function deleteTransaction() {
   if (!confirmed) return;
 
   try {
-    if (state.apiUrl) {
+    if (isApiConfigured()) {
       await apiRequest("delete", { id: state.editingId });
       await loadData();
     } else {
@@ -690,51 +731,6 @@ async function deleteTransaction() {
   } catch (error) {
     showToast(`ลบไม่สำเร็จ: ${error.message}`, "error");
   }
-}
-
-function openSettings() {
-  settingApiUrl.value = state.apiUrl;
-  settingToken.value = state.token;
-  settingsDialog.hidden = false;
-  setTimeout(() => settingApiUrl.focus(), 50);
-}
-
-function closeSettings() {
-  settingsDialog.hidden = true;
-}
-
-async function saveSettings() {
-  state.apiUrl = settingApiUrl.value.trim();
-  state.token = settingToken.value.trim();
-  localStorage.setItem(API_URL_KEY, state.apiUrl);
-  localStorage.setItem(API_TOKEN_KEY, state.token);
-  closeSettings();
-  showToast("บันทึกการตั้งค่าแล้ว", "success");
-  await loadData();
-}
-
-async function testApi() {
-  state.apiUrl = settingApiUrl.value.trim();
-  state.token = settingToken.value.trim();
-  if (!state.apiUrl) {
-    showToast("กรุณาใส่ Apps Script URL", "error");
-    return;
-  }
-  try {
-    await apiRequest("ping");
-    showToast("เชื่อมต่อสำเร็จ", "success");
-  } catch (error) {
-    showToast(`ทดสอบไม่สำเร็จ: ${error.message}`, "error");
-  }
-}
-
-function clearLocalData() {
-  const confirmed = confirm("ต้องการล้างข้อมูลในเครื่องนี้ใช่ไหม? ข้อมูลใน Google Sheet จะไม่ถูกลบ");
-  if (!confirmed) return;
-  localStorage.removeItem(STORAGE_KEY);
-  state.transactions = [];
-  showToast("ล้างข้อมูลในเครื่องแล้ว", "success");
-  render();
 }
 
 function showToast(message, type = "") {
@@ -782,11 +778,6 @@ document.addEventListener("click", async event => {
   if (!actionButton) return;
 
   const action = actionButton.dataset.action;
-  if (action === "open-settings") openSettings();
-  if (action === "close-settings") closeSettings();
-  if (action === "save-settings") await saveSettings();
-  if (action === "test-api") await testApi();
-  if (action === "clear-local") clearLocalData();
   if (action === "prev-month") changeMonth(-1);
   if (action === "next-month") changeMonth(1);
   if (action === "go-list") setRoute("list");
@@ -800,10 +791,6 @@ document.addEventListener("input", event => {
   const input = event.target.closest("[data-form]");
   if (!input) return;
   state.form[input.dataset.form] = input.value;
-});
-
-settingsDialog.addEventListener("keydown", event => {
-  if (event.key === "Escape") closeSettings();
 });
 
 loadData();

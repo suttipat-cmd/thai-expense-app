@@ -32,32 +32,10 @@
     </nav>
   </div>
 
-  <section id="settingsDialog" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="settingsTitle">
-    <div class="modal-backdrop" data-action="close-settings"></div>
-    <div class="modal-card">
-      <div class="modal-header">
-        <h2 id="settingsTitle">ตั้งค่าการเชื่อมต่อ</h2>
-        <button class="icon-button" type="button" data-action="close-settings" aria-label="ปิด">×</button>
-      </div>
-      <p class="muted small">
-        ถ้ายังไม่ใส่ URL ระบบจะใช้ข้อมูลในเครื่องนี้ก่อน เมื่อตั้งค่า Apps Script แล้วจึงเชื่อมกับ Google Sheet ได้
-      </p>
-      <label class="field">
-        <span>Apps Script Web App URL</span>
-        <input id="settingApiUrl" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec">
-      </label>
-      <label class="field">
-        <span>Token</span>
-        <input id="settingToken" type="password" autocomplete="off" placeholder="ใส่ token เดียวกับใน Apps Script">
-      </label>
-      <div class="modal-actions">
-        <button class="secondary-button" type="button" data-action="test-api">ทดสอบ</button>
-        <button class="primary-button" type="button" data-action="save-settings">บันทึก</button>
-      </div>
-      <button class="link-button danger-text" type="button" data-action="clear-local">ล้างข้อมูลในเครื่อง</button>
-    </div>
-  </section>
-
   <div id="toast" class="toast" hidden></div>
+
+  <noscript>
+    <div class="noscript-box">เว็บนี้ต้องเปิดใช้งาน JavaScript ก่อนจึงจะใช้งานได้</div>
+  </noscript>
 </body>
 </html>

@@ -132,7 +132,8 @@ button {
 .month-nav-button:active,
 .primary-button:active,
 .secondary-button:active,
-.nav-button:active {
+.nav-button:active,
+.danger-button:active {
   transform: translateY(1px);
 }
 
@@ -217,13 +218,25 @@ button {
 .muted { color: var(--slate-500); }
 .small { font-size: 13px; }
 
-.quick-card {
+.quick-card,
+.notice-card {
   padding: 13px 14px;
   margin-bottom: 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.notice-card {
+  align-items: flex-start;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.notice-card.error {
+  background: #fff1f2;
+  border-color: #fecdd3;
 }
 
 .quick-left {
@@ -347,7 +360,8 @@ button {
 .primary-button:focus-visible,
 .secondary-button:focus-visible,
 .icon-button:focus-visible,
-.category-card:focus-visible {
+.category-card:focus-visible,
+.danger-button:focus-visible {
   outline: 3px solid rgba(37,99,235,0.28);
   outline-offset: 2px;
 }
@@ -356,6 +370,7 @@ button {
 .tx-icon.expense { background: #fff1e8; }
 
 .tx-title {
+  display: block;
   font-weight: 800;
   font-size: 15px;
   white-space: nowrap;
@@ -364,6 +379,7 @@ button {
 }
 
 .tx-meta {
+  display: block;
   margin-top: 3px;
   color: var(--slate-500);
   font-size: 12px;
@@ -573,10 +589,6 @@ button {
   margin-bottom: 18px;
 }
 
-.month-summary-card.with-balance {
-  grid-template-columns: 1fr 1px 1fr 1px 1fr;
-}
-
 .summary-item {
   text-align: center;
 }
@@ -781,52 +793,8 @@ button {
   box-shadow: 0 12px 24px rgba(37, 99, 235, 0.34);
 }
 
-.modal[hidden],
 .toast[hidden] {
   display: none;
-}
-
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(15,23,42,0.45);
-}
-
-.modal-card {
-  position: relative;
-  width: min(100%, 430px);
-  border-radius: 26px 26px 0 0;
-  background: var(--white);
-  padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
-  box-shadow: 0 -20px 50px rgba(15, 23, 42, 0.25);
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.modal-header h2 {
-  margin: 0;
-  font-size: 20px;
-}
-
-.modal-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin: 8px 0 6px;
 }
 
 .toast {
@@ -847,6 +815,17 @@ button {
 
 .toast.success { background: rgba(22, 163, 74, 0.94); }
 .toast.error { background: rgba(239, 68, 68, 0.94); }
+
+.noscript-box {
+  position: fixed;
+  inset: 16px;
+  z-index: 100;
+  padding: 18px;
+  border-radius: 20px;
+  color: var(--slate-950);
+  background: white;
+  box-shadow: var(--shadow);
+}
 
 @media (max-width: 370px) {
   .app-main { padding-left: 12px; padding-right: 12px; }
