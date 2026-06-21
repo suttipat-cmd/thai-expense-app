@@ -1182,3 +1182,83 @@ button.is-loading::after {
     max-width: 78px;
   }
 }
+
+
+/* ===== UI/performance hardening v1.4.0 ===== */
+.notice-card.compact {
+  padding: 12px 14px;
+}
+
+.field {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.field input,
+.field textarea,
+.field select,
+input[type="date"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  line-height: 1.2;
+  padding-right: 10px;
+}
+
+input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
+  min-height: 24px;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  margin: 0;
+  padding: 0;
+  max-width: 22px;
+}
+
+.form-section,
+.amount-card,
+.slip-card,
+.field,
+.form-actions {
+  width: 100%;
+}
+
+.busy-banner,
+.toast {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 390px) {
+  .field input,
+  .field textarea,
+  .field select {
+    padding-left: 11px;
+    padding-right: 11px;
+  }
+
+  input[type="date"] {
+    font-size: 15px;
+  }
+
+  .slip-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen,
+  .busy-spinner,
+  button.is-loading::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

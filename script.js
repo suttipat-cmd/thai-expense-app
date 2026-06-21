@@ -3,16 +3,21 @@
 // 1) Deploy Code.gs เป็น Web App
 // 2) นำ Web App URL ที่ลงท้ายด้วย /exec มาใส่ใน API_URL
 // 3) ตั้ง TOKEN ให้ตรงกับ TOKEN ใน Code.gs
-// 4) ใส่ TYPHOON_API_KEY ใน Code.gs เท่านั้น ไม่ต้องใส่ในไฟล์นี้
+// 4) ใส่ TYPHOON_API_KEY ใน Apps Script > Script Properties เท่านั้น ไม่ต้องใส่ในไฟล์นี้
 // ============================================================
 const CONFIG = {
   API_URL: "https://script.google.com/macros/s/AKfycbyofMEquMUwuDVjUm8u05eW_ug6lMWcTZZ3sxn4cNdK0-nBXSej31AwE7_66xKqRkW8Hg/exec",
   TOKEN: "change-this-token"
 };
 
-const STORAGE_KEY = "thai-expense-transactions-v3";
-const MAX_SLIP_IMAGE_SIDE = 1600;
-const SLIP_IMAGE_QUALITY = 0.82;
+const STORAGE_KEY = "thai-expense-transactions-v4";
+const MAX_SLIP_IMAGE_SIDE = 1120;
+const MIN_SLIP_IMAGE_SIDE = 720;
+const SLIP_IMAGE_QUALITY = 0.68;
+const MIN_SLIP_IMAGE_QUALITY = 0.52;
+const MAX_SLIP_BASE64_LENGTH = 1400000;
+const SLIP_OCR_TIMEOUT_MS = 110000;
+const MAX_RENDERED_MONTH_ITEMS = 250;
 
 const THAI_MONTHS = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -79,6 +84,12 @@ async function withPending(action, message, task) {
     state.pendingMessage = "";
     render();
   }
+}
+
+function setPendingMessage(message) {
+  if (!state.pending) return;
+  state.pendingMessage = message;
+  render();
 }
 
 function makeDefaultForm() {
@@ -352,7 +363,7 @@ function apiBridgePost(action, payload = {}) {
       settled = true;
       cleanup();
       reject(new Error("หมดเวลาการประมวลผล OCR"));
-    }, 70000);
+    }, SLIP_OCR_TIMEOUT_MS);
 
     const onMessage = event => {
       const message = event.data;
@@ -599,8 +610,10 @@ function renderOcrResult(result) {
 }
 
 function renderList() {
-  const items = sortTransactions(monthTransactions());
-  const summary = summarize(items);
+  const allItems = sortTransactions(monthTransactions());
+  const items = allItems.slice(0, MAX_RENDERED_MONTH_ITEMS);
+  const hasHiddenItems = allItems.length > items.length;
+  const summary = summarize(allItems);
   const groups = groupByDate(items);
 
   return `
@@ -627,6 +640,7 @@ function renderList() {
       </section>
 
       ${items.length ? Object.entries(groups).map(([date, txs]) => renderDayGroup(date, txs)).join("") : renderEmpty("เดือนนี้ยังไม่มีรายการ", "เพิ่มรายการแรกของเดือนนี้เพื่อดูประวัติย้อนหลัง", "📭")}
+      ${hasHiddenItems ? renderListLimitNotice(allItems.length, items.length) : ""}
     </section>
   `;
 }
@@ -730,6 +744,17 @@ function renderDayGroup(date, txs) {
       </div>
       <div class="transaction-list">
         ${txs.map(tx => renderTransactionCard(tx)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderListLimitNotice(total, shown) {
+  return `
+    <section class="card notice-card compact">
+      <div>
+        <strong>แสดง ${formatMoney(shown)} จาก ${formatMoney(total)} รายการ</strong>
+        <div class="muted small">ระบบจำกัดจำนวนรายการที่แสดงพร้อมกันเพื่อให้มือถือทำงานลื่นขึ้น ยอดสรุปยังคำนวณจากรายการทั้งหมด</div>
       </div>
     </section>
   `;
@@ -860,8 +885,14 @@ async function saveTransaction() {
 
     try {
       if (isApiConfigured()) {
-        await apiRequest(state.editingId ? "update" : "create", { transaction });
-        await loadData();
+        const result = await apiRequest(state.editingId ? "update" : "create", { transaction });
+        const saved = normalizeTransactions([result.data || transaction])[0] || transaction;
+        if (state.editingId) {
+          state.transactions = state.transactions.map(tx => tx.id === state.editingId ? saved : tx);
+        } else {
+          state.transactions = [saved, ...state.transactions];
+        }
+        writeLocalTransactions(state.transactions);
       } else {
         if (state.editingId) {
           state.transactions = state.transactions.map(tx => tx.id === state.editingId ? transaction : tx);
@@ -889,13 +920,12 @@ async function deleteTransaction() {
 
   await withPending("delete", "กำลังลบรายการ", async () => {
     try {
+      const deletingId = state.editingId;
       if (isApiConfigured()) {
-        await apiRequest("delete", { id: state.editingId });
-        await loadData();
-      } else {
-        state.transactions = state.transactions.filter(tx => tx.id !== state.editingId);
-        writeLocalTransactions(state.transactions);
+        await apiRequest("delete", { id: deletingId });
       }
+      state.transactions = state.transactions.filter(tx => tx.id !== deletingId);
+      writeLocalTransactions(state.transactions);
       state.editingId = null;
       state.ocrResult = null;
       state.form = makeDefaultForm();
@@ -938,10 +968,13 @@ async function scanSlipImage(file) {
     return;
   }
 
-  await withPending("ocr", "กำลังอ่านสลิปธนาคาร", async () => {
+  await withPending("ocr", "กำลังเตรียมรูปสลิป", async () => {
     try {
+      setPendingMessage("กำลังบีบอัดรูปสลิป");
       const prepared = await prepareImageForOcr(file);
+      setPendingMessage(`กำลังอ่านสลิป (${prepared.width}×${prepared.height})`);
       const result = await apiBridgePost("ocrSlip", prepared);
+      setPendingMessage("กำลังเติมข้อมูลจาก OCR");
       const data = result.data || {};
       applyOcrResult(data);
       showToast("อ่านสลิปแล้ว โปรดตรวจสอบก่อนบันทึก", "success");
@@ -959,31 +992,67 @@ function prepareImageForOcr(file) {
       const image = new Image();
       image.onerror = () => reject(new Error("เปิดรูปสลิปไม่สำเร็จ"));
       image.onload = () => {
-        const scale = Math.min(1, MAX_SLIP_IMAGE_SIDE / Math.max(image.width, image.height));
-        const width = Math.max(1, Math.round(image.width * scale));
-        const height = Math.max(1, Math.round(image.height * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d", { alpha: false });
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, width, height);
-        ctx.drawImage(image, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", SLIP_IMAGE_QUALITY);
-        const base64 = dataUrl.split(",")[1] || "";
-        resolve({
-          imageBase64: base64,
-          mimeType: "image/jpeg",
-          fileName: file.name || "slip.jpg",
-          originalSize: file.size,
-          width,
-          height
-        });
+        try {
+          let maxSide = MAX_SLIP_IMAGE_SIDE;
+          let quality = SLIP_IMAGE_QUALITY;
+          let encoded = null;
+
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            encoded = resizeAndEncodeImage(image, maxSide, quality);
+            if (encoded.base64.length <= MAX_SLIP_BASE64_LENGTH) break;
+            if (quality > MIN_SLIP_IMAGE_QUALITY) {
+              quality = Math.max(MIN_SLIP_IMAGE_QUALITY, quality - 0.08);
+            } else {
+              maxSide = Math.max(MIN_SLIP_IMAGE_SIDE, Math.round(maxSide * 0.84));
+            }
+            if (maxSide <= MIN_SLIP_IMAGE_SIDE && quality <= MIN_SLIP_IMAGE_QUALITY) break;
+          }
+
+          if (!encoded || !encoded.base64) {
+            reject(new Error("บีบอัดรูปไม่สำเร็จ"));
+            return;
+          }
+
+          resolve({
+            imageBase64: encoded.base64,
+            mimeType: "image/jpeg",
+            fileName: file.name || "slip.jpg",
+            originalSize: file.size,
+            compressedSizeApprox: Math.round(encoded.base64.length * 0.75),
+            width: encoded.width,
+            height: encoded.height,
+            quality: encoded.quality
+          });
+        } catch (error) {
+          reject(new Error("เตรียมรูปสลิปไม่สำเร็จ"));
+        }
       };
       image.src = String(reader.result || "");
     };
     reader.readAsDataURL(file);
   });
+}
+
+function resizeAndEncodeImage(image, maxSide, quality) {
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(image, 0, 0, width, height);
+  const dataUrl = canvas.toDataURL("image/jpeg", quality);
+  return {
+    base64: dataUrl.split(",")[1] || "",
+    width,
+    height,
+    quality
+  };
 }
 
 function applyOcrResult(data) {
