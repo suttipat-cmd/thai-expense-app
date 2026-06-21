@@ -3,13 +3,16 @@
 // 1) Deploy Code.gs เป็น Web App
 // 2) นำ Web App URL ที่ลงท้ายด้วย /exec มาใส่ใน API_URL
 // 3) ตั้ง TOKEN ให้ตรงกับ TOKEN ใน Code.gs
+// 4) ใส่ TYPHOON_API_KEY ใน Code.gs เท่านั้น ไม่ต้องใส่ในไฟล์นี้
 // ============================================================
 const CONFIG = {
   API_URL: "https://script.google.com/macros/s/AKfycbyofMEquMUwuDVjUm8u05eW_ug6lMWcTZZ3sxn4cNdK0-nBXSej31AwE7_66xKqRkW8Hg/exec",
-  TOKEN: "my-secret-token-123"
+  TOKEN: "change-this-token"
 };
 
-const STORAGE_KEY = "thai-expense-transactions-v2";
+const STORAGE_KEY = "thai-expense-transactions-v3";
+const MAX_SLIP_IMAGE_SIDE = 1600;
+const SLIP_IMAGE_QUALITY = 0.82;
 
 const THAI_MONTHS = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -41,7 +44,10 @@ const state = {
   transactions: [],
   loading: false,
   lastError: "",
+  pending: "",
+  pendingMessage: "",
   editingId: null,
+  ocrResult: null,
   form: makeDefaultForm()
 };
 
@@ -51,6 +57,28 @@ const toastEl = document.getElementById("toast");
 function isApiConfigured() {
   const url = String(CONFIG.API_URL || "").trim();
   return Boolean(url && !url.includes("PASTE_APPS_SCRIPT_WEB_APP_URL_HERE") && /^https?:\/\//i.test(url));
+}
+
+function isBusy() {
+  return Boolean(state.loading || state.pending);
+}
+
+function isPending(action) {
+  return state.pending === action;
+}
+
+async function withPending(action, message, task) {
+  if (isBusy()) return;
+  state.pending = action;
+  state.pendingMessage = message;
+  render();
+  try {
+    return await task();
+  } finally {
+    state.pending = "";
+    state.pendingMessage = "";
+    render();
+  }
 }
 
 function makeDefaultForm() {
@@ -183,15 +211,18 @@ function signedAmount(tx) {
 }
 
 function setRoute(route) {
+  if (isBusy()) return;
   state.route = route;
   state.lastError = "";
   if (route === "add" && !state.editingId) {
     state.form = makeDefaultForm();
+    state.ocrResult = null;
   }
   render();
 }
 
 function changeMonth(offset) {
+  if (isBusy()) return;
   const [year, month] = state.selectedMonth.split("-").map(Number);
   const next = new Date(year, month - 1 + offset, 1);
   state.selectedMonth = getMonthKey(next);
@@ -276,18 +307,106 @@ function apiRequest(action, payload = {}) {
   });
 }
 
+function apiBridgePost(action, payload = {}) {
+  if (!isApiConfigured()) {
+    return Promise.reject(new Error("ยังไม่ได้ใส่ Apps Script URL ใน script.js"));
+  }
+
+  return new Promise((resolve, reject) => {
+    const requestId = `bridge_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const iframe = document.createElement("iframe");
+    const form = document.createElement("form");
+    let settled = false;
+
+    iframe.name = requestId;
+    iframe.className = "hidden-frame";
+    form.className = "hidden-upload";
+    form.method = "POST";
+    form.action = CONFIG.API_URL.trim();
+    form.target = requestId;
+    form.enctype = "application/x-www-form-urlencoded";
+
+    const addInput = (name, value) => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    };
+
+    addInput("action", action);
+    addInput("token", CONFIG.TOKEN || "");
+    addInput("payload", JSON.stringify(payload));
+    addInput("bridge", "1");
+    addInput("requestId", requestId);
+
+    const cleanup = () => {
+      window.removeEventListener("message", onMessage);
+      form.remove();
+      iframe.remove();
+      clearTimeout(timer);
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("หมดเวลาการประมวลผล OCR"));
+    }, 70000);
+
+    const onMessage = event => {
+      const message = event.data;
+      if (!message || message.source !== "thai-expense-app" || message.requestId !== requestId) return;
+      if (settled) return;
+      settled = true;
+      cleanup();
+
+      const json = message.payload;
+      if (!json || json.ok === false) {
+        reject(new Error(json?.error || "ประมวลผล OCR ไม่สำเร็จ"));
+        return;
+      }
+      resolve(json);
+    };
+
+    window.addEventListener("message", onMessage);
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    form.submit();
+  });
+}
+
 function render() {
   updateNav();
   if (state.route === "home") app.innerHTML = renderHome();
   if (state.route === "add") app.innerHTML = renderAdd();
   if (state.route === "list") app.innerHTML = renderList();
   if (state.route === "summary") app.innerHTML = renderSummary();
+  if (state.pending) app.insertAdjacentHTML("beforeend", renderBusyBanner());
 }
 
 function updateNav() {
   document.querySelectorAll(".nav-button").forEach(button => {
     button.classList.toggle("active", button.dataset.route === state.route);
+    button.disabled = isBusy();
   });
+}
+
+function disabledAttr() {
+  return isBusy() ? "disabled" : "";
+}
+
+function loadingClass(action) {
+  return isPending(action) ? "is-loading" : "";
+}
+
+function renderBusyBanner() {
+  return `
+    <div class="busy-banner" role="status" aria-live="assertive">
+      <span class="busy-spinner"></span>
+      <span>${escapeHtml(state.pendingMessage || "กำลังทำงาน")}</span>
+    </div>
+  `;
 }
 
 function renderHome() {
@@ -304,9 +423,9 @@ function renderHome() {
       <header class="topbar">
         <div>
           <h1 class="page-title">หน้าแรก</h1>
-          <button class="month-pill" type="button" data-action="go-list">${monthTitle(state.selectedMonth)}⌄</button>
+          <button class="month-pill" type="button" data-action="go-list" ${disabledAttr()}>${monthTitle(state.selectedMonth)}⌄</button>
         </div>
-        <button class="icon-button" type="button" data-action="reload" aria-label="โหลดใหม่">↻</button>
+        <button class="icon-button ${state.loading ? "is-loading" : ""}" type="button" data-action="reload" aria-label="โหลดใหม่" ${disabledAttr()}>↻</button>
       </header>
 
       ${renderNotice()}
@@ -335,11 +454,11 @@ function renderHome() {
         <span class="muted">›</span>
       </section>
 
-      <button class="primary-button full-width" type="button" data-route="add">＋ เพิ่มรายการ</button>
+      <button class="primary-button full-width" type="button" data-route="add" ${disabledAttr()}>＋ เพิ่มรายการ</button>
 
       <div class="section-head">
         <h2 class="section-title">รายการล่าสุด</h2>
-        <button class="link-button" type="button" data-route="list">ดูทั้งหมด</button>
+        <button class="link-button" type="button" data-route="list" ${disabledAttr()}>ดูทั้งหมด</button>
       </div>
       ${latest.length ? `<div class="transaction-list">${latest.map(tx => renderTransactionCard(tx, true)).join("")}</div>` : renderEmpty("ยังไม่มีรายการ", "เริ่มจากการกดปุ่มเพิ่มรายการเพื่อบันทึกรายรับรายจ่ายแรกของคุณ", "🧾")}
     </section>
@@ -367,7 +486,7 @@ function renderNotice() {
         <div>
           <strong>ยังไม่ได้ฝัง Apps Script URL</strong>
           <div class="muted small">แก้ค่า CONFIG.API_URL และ CONFIG.TOKEN ในไฟล์ script.js แล้ว push ขึ้น GitHub</div>
-          <div class="muted small">ระหว่างนี้ระบบจะเก็บข้อมูลในเครื่องนี้ก่อน</div>
+          <div class="muted small">ระหว่างนี้ระบบจะเก็บข้อมูลในเครื่องนี้ก่อน และยังสแกนสลิปไม่ได้</div>
         </div>
       </section>
     `;
@@ -384,21 +503,23 @@ function renderAdd() {
   return `
     <section class="screen">
       <header class="topbar center">
-        <button class="link-button" type="button" data-action="cancel-form">ยกเลิก</button>
+        <button class="link-button" type="button" data-action="cancel-form" ${disabledAttr()}>ยกเลิก</button>
         <h1 class="page-title">${isEdit ? "แก้ไขรายการ" : "เพิ่มรายการ"}</h1>
         <span class="small muted">${isEdit ? "แก้ไข" : "ใหม่"}</span>
       </header>
 
       <div class="segmented" role="tablist" aria-label="ประเภท">
-        <button type="button" class="${form.type === "expense" ? "active expense" : ""}" data-type="expense">รายจ่าย</button>
-        <button type="button" class="${form.type === "income" ? "active income" : ""}" data-type="income">รายรับ</button>
+        <button type="button" class="${form.type === "expense" ? "active expense" : ""}" data-type="expense" ${disabledAttr()}>รายจ่าย</button>
+        <button type="button" class="${form.type === "income" ? "active income" : ""}" data-type="income" ${disabledAttr()}>รายรับ</button>
       </div>
+
+      ${renderSlipScanner(isEdit)}
 
       <section class="card amount-card">
         <label for="amountInput">จำนวนเงิน</label>
         <div class="amount-input-wrap">
           <span class="currency-symbol">฿</span>
-          <input id="amountInput" class="amount-input" data-form="amount" value="${escapeHtml(form.amount)}" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="จำนวนเงิน">
+          <input id="amountInput" class="amount-input" data-form="amount" value="${escapeHtml(form.amount)}" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="จำนวนเงิน" ${disabledAttr()}>
         </div>
       </section>
 
@@ -406,7 +527,7 @@ function renderAdd() {
         <span class="form-label">หมวดหมู่</span>
         <div class="category-grid">
           ${categories.map(category => `
-            <button class="category-card ${form.category === category.name ? `active ${form.type}` : ""}" type="button" data-category="${escapeHtml(category.name)}">
+            <button class="category-card ${form.category === category.name ? `active ${form.type}` : ""}" type="button" data-category="${escapeHtml(category.name)}" ${disabledAttr()}>
               <span class="category-icon">${category.icon}</span>
               <span>${category.name}</span>
             </button>
@@ -416,20 +537,63 @@ function renderAdd() {
 
       <label class="field">
         <span>วันที่</span>
-        <input type="date" data-form="date" value="${escapeHtml(form.date)}">
+        <input type="date" data-form="date" value="${escapeHtml(form.date)}" ${disabledAttr()}>
       </label>
 
       <label class="field">
         <span>บันทึกเพิ่มเติม</span>
-        <textarea data-form="note" maxlength="120" placeholder="เช่น กาแฟ, ข้าวกลางวัน, เงินเดือน">${escapeHtml(form.note)}</textarea>
+        <textarea data-form="note" maxlength="120" placeholder="เช่น กาแฟ, ข้าวกลางวัน, เงินเดือน" ${disabledAttr()}>${escapeHtml(form.note)}</textarea>
       </label>
 
       <div class="form-actions">
-        <button class="primary-button" type="button" data-action="save-transaction">บันทึก</button>
-        ${isEdit ? `<button class="danger-button" type="button" data-action="delete-transaction">ลบรายการนี้</button>` : ""}
-        <button class="secondary-button" type="button" data-action="cancel-form">ยกเลิก</button>
+        <button class="primary-button ${loadingClass("save")}" type="button" data-action="save-transaction" ${disabledAttr()}>${isPending("save") ? "กำลังบันทึก" : "บันทึก"}</button>
+        ${isEdit ? `<button class="danger-button ${loadingClass("delete")}" type="button" data-action="delete-transaction" ${disabledAttr()}>${isPending("delete") ? "กำลังลบ" : "ลบรายการนี้"}</button>` : ""}
+        <button class="secondary-button" type="button" data-action="cancel-form" ${disabledAttr()}>ยกเลิก</button>
       </div>
     </section>
+  `;
+}
+
+function renderSlipScanner(isEdit) {
+  if (isEdit) {
+    return `
+      <section class="card slip-card">
+        <div class="slip-card-header">
+          <div class="slip-card-title"><span class="slip-icon">🧾</span><span>สแกนสลิป</span></div>
+        </div>
+        <div class="muted small">ใช้ได้เฉพาะตอนเพิ่มรายการใหม่เท่านั้น</div>
+      </section>
+    `;
+  }
+
+  const canScan = isApiConfigured();
+  return `
+    <section class="card slip-card">
+      <div class="slip-card-header">
+        <div>
+          <div class="slip-card-title"><span class="slip-icon">🧾</span><span>สแกนสลิปธนาคาร</span></div>
+          <div class="muted small">OCR จะเติมยอดเงิน วันที่ และหมายเหตุให้ตรวจสอบก่อนกดบันทึก</div>
+        </div>
+      </div>
+      <div class="slip-actions">
+        <button class="secondary-button ${loadingClass("ocr")}" type="button" data-action="scan-slip" ${!canScan || isBusy() ? "disabled" : ""}>${isPending("ocr") ? "กำลังอ่านสลิป" : "เลือกรูปสลิป"}</button>
+        ${!canScan ? `<div class="muted small">ต้องใส่ Apps Script URL ใน script.js ก่อนจึงจะสแกนสลิปได้</div>` : ""}
+      </div>
+      ${state.ocrResult ? renderOcrResult(state.ocrResult) : ""}
+    </section>
+  `;
+}
+
+function renderOcrResult(result) {
+  return `
+    <div class="ocr-result-card">
+      <strong>ผลจาก OCR</strong>
+      <div class="muted small">โปรดตรวจสอบข้อมูลก่อนกดบันทึก ระบบไม่บันทึกรูปสลิป</div>
+      <div class="ocr-result-grid">
+        <div class="ocr-result-item"><span>ยอดเงิน</span><strong>${result.amount ? formatMoney(result.amount) : "ไม่พบ"}</strong></div>
+        <div class="ocr-result-item"><span>วันที่</span><strong>${escapeHtml(result.date || "วันนี้")}</strong></div>
+      </div>
+    </div>
   `;
 }
 
@@ -443,7 +607,7 @@ function renderList() {
       <header class="topbar center">
         <span></span>
         <h1 class="page-title">รายการ</h1>
-        <button class="icon-button" type="button" data-action="reload" aria-label="โหลดใหม่">↻</button>
+        <button class="icon-button ${state.loading ? "is-loading" : ""}" type="button" data-action="reload" aria-label="โหลดใหม่" ${disabledAttr()}>↻</button>
       </header>
 
       ${renderMonthSwitcher()}
@@ -478,7 +642,7 @@ function renderSummary() {
       <header class="topbar center">
         <span></span>
         <h1 class="page-title">สรุป</h1>
-        <button class="icon-button" type="button" data-action="reload" aria-label="โหลดใหม่">↻</button>
+        <button class="icon-button ${state.loading ? "is-loading" : ""}" type="button" data-action="reload" aria-label="โหลดใหม่" ${disabledAttr()}>↻</button>
       </header>
 
       ${renderMonthSwitcher()}
@@ -531,9 +695,9 @@ function renderSummary() {
 function renderMonthSwitcher() {
   return `
     <div class="month-switcher">
-      <button class="month-nav-button" type="button" data-action="prev-month" aria-label="เดือนก่อนหน้า">‹</button>
+      <button class="month-nav-button" type="button" data-action="prev-month" aria-label="เดือนก่อนหน้า" ${disabledAttr()}>‹</button>
       <strong>${monthTitle(state.selectedMonth)}</strong>
-      <button class="month-nav-button" type="button" data-action="next-month" aria-label="เดือนถัดไป">›</button>
+      <button class="month-nav-button" type="button" data-action="next-month" aria-label="เดือนถัดไป" ${disabledAttr()}>›</button>
     </div>
   `;
 }
@@ -541,7 +705,7 @@ function renderMonthSwitcher() {
 function renderTransactionCard(tx, includeDate = false) {
   const meta = getCategoryMeta(tx.category, tx.type);
   return `
-    <button class="transaction-card" type="button" data-edit-id="${escapeHtml(tx.id)}">
+    <button class="transaction-card" type="button" data-edit-id="${escapeHtml(tx.id)}" ${disabledAttr()}>
       <span class="tx-icon ${tx.type}">${meta.icon}</span>
       <span>
         <span class="tx-title">${escapeHtml(transactionTitle(tx))}</span>
@@ -642,9 +806,11 @@ function normalizeAmount(value) {
 }
 
 function startEdit(id) {
+  if (isBusy()) return;
   const tx = state.transactions.find(item => item.id === id);
   if (!tx) return;
   state.editingId = id;
+  state.ocrResult = null;
   state.form = {
     type: tx.type,
     amount: String(tx.amount),
@@ -657,13 +823,16 @@ function startEdit(id) {
 }
 
 function cancelForm() {
+  if (isBusy()) return;
   state.editingId = null;
+  state.ocrResult = null;
   state.form = makeDefaultForm();
   state.route = "home";
   render();
 }
 
 async function saveTransaction() {
+  if (isBusy()) return;
   const amount = normalizeAmount(state.form.amount);
   if (!amount || amount <= 0) {
     showToast("กรุณาใส่จำนวนเงินให้ถูกต้อง", "error");
@@ -674,63 +843,164 @@ async function saveTransaction() {
     return;
   }
 
-  const now = new Date().toISOString();
-  const current = state.transactions.find(tx => tx.id === state.editingId);
-  const transaction = {
-    id: state.editingId || createId(),
-    type: state.form.type,
-    amount,
-    category: state.form.category || "อื่นๆ",
-    date: state.form.date,
-    note: state.form.note.trim(),
-    createdAt: current?.createdAt || now,
-    updatedAt: now
-  };
+  await withPending("save", "กำลังบันทึกรายการ", async () => {
+    const now = new Date().toISOString();
+    const current = state.transactions.find(tx => tx.id === state.editingId);
+    const transaction = {
+      id: state.editingId || createId(),
+      type: state.form.type,
+      amount,
+      category: state.form.category || "อื่นๆ",
+      date: state.form.date,
+      note: state.form.note.trim(),
+      createdAt: current?.createdAt || now,
+      updatedAt: now
+    };
 
-  try {
-    if (isApiConfigured()) {
-      await apiRequest(state.editingId ? "update" : "create", { transaction });
-      await loadData();
-    } else {
-      if (state.editingId) {
-        state.transactions = state.transactions.map(tx => tx.id === state.editingId ? transaction : tx);
+    try {
+      if (isApiConfigured()) {
+        await apiRequest(state.editingId ? "update" : "create", { transaction });
+        await loadData();
       } else {
-        state.transactions = [transaction, ...state.transactions];
+        if (state.editingId) {
+          state.transactions = state.transactions.map(tx => tx.id === state.editingId ? transaction : tx);
+        } else {
+          state.transactions = [transaction, ...state.transactions];
+        }
+        writeLocalTransactions(state.transactions);
       }
-      writeLocalTransactions(state.transactions);
+      state.selectedMonth = transaction.date.slice(0, 7);
+      state.editingId = null;
+      state.ocrResult = null;
+      state.form = makeDefaultForm();
+      state.route = "home";
+      showToast("บันทึกสำเร็จ", "success");
+    } catch (error) {
+      showToast(`บันทึกไม่สำเร็จ: ${error.message}`, "error");
     }
-    state.selectedMonth = transaction.date.slice(0, 7);
-    state.editingId = null;
-    state.form = makeDefaultForm();
-    state.route = "home";
-    showToast("บันทึกสำเร็จ", "success");
-    render();
-  } catch (error) {
-    showToast(`บันทึกไม่สำเร็จ: ${error.message}`, "error");
-  }
+  });
 }
 
 async function deleteTransaction() {
-  if (!state.editingId) return;
+  if (isBusy() || !state.editingId) return;
   const confirmed = confirm("ต้องการลบรายการนี้ใช่ไหม?");
   if (!confirmed) return;
 
-  try {
-    if (isApiConfigured()) {
-      await apiRequest("delete", { id: state.editingId });
-      await loadData();
-    } else {
-      state.transactions = state.transactions.filter(tx => tx.id !== state.editingId);
-      writeLocalTransactions(state.transactions);
+  await withPending("delete", "กำลังลบรายการ", async () => {
+    try {
+      if (isApiConfigured()) {
+        await apiRequest("delete", { id: state.editingId });
+        await loadData();
+      } else {
+        state.transactions = state.transactions.filter(tx => tx.id !== state.editingId);
+        writeLocalTransactions(state.transactions);
+      }
+      state.editingId = null;
+      state.ocrResult = null;
+      state.form = makeDefaultForm();
+      state.route = "list";
+      showToast("ลบรายการแล้ว", "success");
+    } catch (error) {
+      showToast(`ลบไม่สำเร็จ: ${error.message}`, "error");
     }
-    state.editingId = null;
-    state.form = makeDefaultForm();
-    state.route = "list";
-    showToast("ลบรายการแล้ว", "success");
-    render();
-  } catch (error) {
-    showToast(`ลบไม่สำเร็จ: ${error.message}`, "error");
+  });
+}
+
+function chooseSlipImage() {
+  if (isBusy()) return;
+  if (!isApiConfigured()) {
+    showToast("ต้องใส่ Apps Script URL ใน script.js ก่อน", "error");
+    return;
   }
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg,image/jpg";
+  input.capture = "environment";
+  input.className = "hidden-upload";
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (file) scanSlipImage(file);
+  });
+  document.body.appendChild(input);
+  input.click();
+}
+
+async function scanSlipImage(file) {
+  if (isBusy()) return;
+
+  if (!/^image\/(png|jpeg|jpg)$/i.test(file.type)) {
+    showToast("รองรับเฉพาะไฟล์ PNG หรือ JPEG", "error");
+    return;
+  }
+
+  await withPending("ocr", "กำลังอ่านสลิปธนาคาร", async () => {
+    try {
+      const prepared = await prepareImageForOcr(file);
+      const result = await apiBridgePost("ocrSlip", prepared);
+      const data = result.data || {};
+      applyOcrResult(data);
+      showToast("อ่านสลิปแล้ว โปรดตรวจสอบก่อนบันทึก", "success");
+    } catch (error) {
+      showToast(`อ่านสลิปไม่สำเร็จ: ${error.message}`, "error");
+    }
+  });
+}
+
+function prepareImageForOcr(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("อ่านไฟล์รูปไม่สำเร็จ"));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("เปิดรูปสลิปไม่สำเร็จ"));
+      image.onload = () => {
+        const scale = Math.min(1, MAX_SLIP_IMAGE_SIDE / Math.max(image.width, image.height));
+        const width = Math.max(1, Math.round(image.width * scale));
+        const height = Math.max(1, Math.round(image.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d", { alpha: false });
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(image, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", SLIP_IMAGE_QUALITY);
+        const base64 = dataUrl.split(",")[1] || "";
+        resolve({
+          imageBase64: base64,
+          mimeType: "image/jpeg",
+          fileName: file.name || "slip.jpg",
+          originalSize: file.size,
+          width,
+          height
+        });
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function applyOcrResult(data) {
+  const amount = Number(data.amount) || 0;
+  const date = String(data.date || "").slice(0, 10);
+  const note = String(data.note || data.merchant || "สลิปธนาคาร").slice(0, 120);
+
+  state.editingId = null;
+  state.form.type = "expense";
+  state.form.category = "อื่นๆ";
+  state.form.amount = amount > 0 ? String(amount) : "";
+  state.form.date = date || formatDateInput(new Date());
+  state.form.note = note;
+  state.ocrResult = {
+    amount,
+    date: state.form.date,
+    merchant: data.merchant || "",
+    note
+  };
+  state.route = "add";
 }
 
 function showToast(message, type = "") {
@@ -740,7 +1010,7 @@ function showToast(message, type = "") {
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => {
     toastEl.hidden = true;
-  }, 2600);
+  }, 3200);
 }
 
 document.addEventListener("click", async event => {
@@ -753,16 +1023,17 @@ document.addEventListener("click", async event => {
   }
 
   const typeButton = event.target.closest("[data-type]");
-  if (typeButton) {
+  if (typeButton && !isBusy()) {
     const type = typeButton.dataset.type;
     state.form.type = type;
     state.form.category = "อื่นๆ";
+    state.ocrResult = null;
     render();
     return;
   }
 
   const categoryButton = event.target.closest("[data-category]");
-  if (categoryButton) {
+  if (categoryButton && !isBusy()) {
     state.form.category = categoryButton.dataset.category;
     render();
     return;
@@ -785,12 +1056,14 @@ document.addEventListener("click", async event => {
   if (action === "cancel-form") cancelForm();
   if (action === "save-transaction") await saveTransaction();
   if (action === "delete-transaction") await deleteTransaction();
+  if (action === "scan-slip") chooseSlipImage();
 });
 
 document.addEventListener("input", event => {
   const input = event.target.closest("[data-form]");
-  if (!input) return;
+  if (!input || isBusy()) return;
   state.form[input.dataset.form] = input.value;
+  if (input.dataset.form !== "note") state.ocrResult = null;
 });
 
 loadData();
