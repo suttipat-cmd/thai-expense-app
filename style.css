@@ -985,3 +985,200 @@ button.is-loading::after {
 @media (max-width: 370px) {
   .ocr-result-grid { grid-template-columns: 1fr; }
 }
+
+/* ===== UI hardening v1.3.0: กันล้นกรอบ/ทับซ้อนบนมือถือ ===== */
+.app-shell,
+.app-main,
+.screen,
+.card,
+.transaction-card,
+.slip-card,
+.chart-card,
+.month-summary-card,
+.summary-grid,
+.form-actions {
+  min-width: 0;
+}
+
+.app-shell {
+  overflow-x: hidden;
+}
+
+.topbar > *,
+.quick-card > *,
+.notice-card > *,
+.transaction-card > *,
+.chart-layout > *,
+.legend-row > *,
+.balance-split > *,
+.month-summary-card > *,
+.stat-card,
+.ocr-result-item,
+.slip-card-header > * {
+  min-width: 0;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button,
+.link-button,
+.category-card,
+.nav-button {
+  min-width: 0;
+  white-space: normal;
+}
+
+.transaction-card {
+  grid-template-columns: 40px minmax(0, 1fr) max-content;
+}
+
+.tx-amount {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.balance-split {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.balance-split > div:not(.divider) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stat-card strong,
+.summary-item strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-layout {
+  grid-template-columns: minmax(112px, 132px) minmax(0, 1fr);
+}
+
+.legend-row {
+  grid-template-columns: 10px minmax(0, 1fr) max-content;
+}
+
+.legend-row span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slip-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.slip-hint {
+  grid-column: 1 / -1;
+}
+
+.ocr-result-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ocr-result-item strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amount-input-wrap {
+  min-width: 0;
+}
+
+.amount-input {
+  min-width: 0;
+}
+
+@media (max-width: 390px) {
+  .app-main {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .balance-value strong {
+    font-size: clamp(32px, 11vw, 42px);
+  }
+
+  .summary-grid {
+    gap: 8px;
+  }
+
+  .stat-card {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .stat-card strong {
+    font-size: clamp(15px, 4.3vw, 18px);
+  }
+
+  .category-grid {
+    gap: 8px;
+  }
+
+  .category-card {
+    min-height: 76px;
+    font-size: 13px;
+  }
+
+  .transaction-card {
+    grid-template-columns: 38px minmax(0, 1fr) max-content;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .tx-amount {
+    max-width: 94px;
+    font-size: 15px;
+  }
+
+  .chart-layout {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 14px;
+  }
+
+  .legend-list {
+    width: 100%;
+  }
+}
+
+@media (max-width: 340px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .month-summary-card {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .month-summary-card .v-divider {
+    width: 100%;
+    height: 1px;
+  }
+
+  .slip-actions,
+  .ocr-result-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tx-amount {
+    max-width: 78px;
+  }
+}

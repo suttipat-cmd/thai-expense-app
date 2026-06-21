@@ -576,8 +576,9 @@ function renderSlipScanner(isEdit) {
         </div>
       </div>
       <div class="slip-actions">
-        <button class="secondary-button ${loadingClass("ocr")}" type="button" data-action="scan-slip" ${!canScan || isBusy() ? "disabled" : ""}>${isPending("ocr") ? "กำลังอ่านสลิป" : "เลือกรูปสลิป"}</button>
-        ${!canScan ? `<div class="muted small">ต้องใส่ Apps Script URL ใน script.js ก่อนจึงจะสแกนสลิปได้</div>` : ""}
+        <button class="secondary-button ${loadingClass("ocr")}" type="button" data-action="scan-slip-gallery" ${!canScan || isBusy() ? "disabled" : ""}>${isPending("ocr") ? "กำลังอ่านสลิป" : "เลือกรูปจากอัลบั้ม"}</button>
+        <button class="secondary-button" type="button" data-action="scan-slip-camera" ${!canScan || isBusy() ? "disabled" : ""}>ถ่ายรูปสลิป</button>
+        ${!canScan ? `<div class="muted small slip-hint">ต้องใส่ Apps Script URL ใน script.js ก่อนจึงจะสแกนสลิปได้</div>` : `<div class="muted small slip-hint">เลือกรูปจากอัลบั้มจะไม่บังคับเปิดกล้อง ส่วนถ่ายรูปสลิปจะเปิดกล้องหลัง</div>`}
       </div>
       ${state.ocrResult ? renderOcrResult(state.ocrResult) : ""}
     </section>
@@ -906,7 +907,7 @@ async function deleteTransaction() {
   });
 }
 
-function chooseSlipImage() {
+function chooseSlipImage(source) {
   if (isBusy()) return;
   if (!isApiConfigured()) {
     showToast("ต้องใส่ Apps Script URL ใน script.js ก่อน", "error");
@@ -916,7 +917,9 @@ function chooseSlipImage() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/png,image/jpeg,image/jpg";
-  input.capture = "environment";
+  if (source === "camera") {
+    input.setAttribute("capture", "environment");
+  }
   input.className = "hidden-upload";
   input.addEventListener("change", () => {
     const file = input.files && input.files[0];
@@ -1056,7 +1059,8 @@ document.addEventListener("click", async event => {
   if (action === "cancel-form") cancelForm();
   if (action === "save-transaction") await saveTransaction();
   if (action === "delete-transaction") await deleteTransaction();
-  if (action === "scan-slip") chooseSlipImage();
+  if (action === "scan-slip-gallery") chooseSlipImage("gallery");
+  if (action === "scan-slip-camera") chooseSlipImage("camera");
 });
 
 document.addEventListener("input", event => {
