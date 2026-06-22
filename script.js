@@ -3,20 +3,13 @@
 // 1) Deploy Code.gs เป็น Web App
 // 2) นำ Web App URL ที่ลงท้ายด้วย /exec มาใส่ใน API_URL
 // 3) ตั้ง TOKEN ให้ตรงกับ TOKEN ใน Code.gs
-// 4) ใส่ TYPHOON_API_KEY ใน Apps Script > Script Properties เท่านั้น ไม่ต้องใส่ในไฟล์นี้
 // ============================================================
 const CONFIG = {
   API_URL: "https://script.google.com/macros/s/AKfycbyofMEquMUwuDVjUm8u05eW_ug6lMWcTZZ3sxn4cNdK0-nBXSej31AwE7_66xKqRkW8Hg/exec",
   TOKEN: "change-this-token"
 };
 
-const STORAGE_KEY = "thai-expense-transactions-v4";
-const MAX_SLIP_IMAGE_SIDE = 1120;
-const MIN_SLIP_IMAGE_SIDE = 720;
-const SLIP_IMAGE_QUALITY = 0.68;
-const MIN_SLIP_IMAGE_QUALITY = 0.52;
-const MAX_SLIP_BASE64_LENGTH = 1400000;
-const SLIP_OCR_TIMEOUT_MS = 110000;
+const STORAGE_KEY = "thai-expense-transactions-v5";
 const MAX_RENDERED_MONTH_ITEMS = 250;
 
 const THAI_MONTHS = [
@@ -52,7 +45,6 @@ const state = {
   pending: "",
   pendingMessage: "",
   editingId: null,
-  ocrResult: null,
   form: makeDefaultForm()
 };
 
@@ -84,12 +76,6 @@ async function withPending(action, message, task) {
     state.pendingMessage = "";
     render();
   }
-}
-
-function setPendingMessage(message) {
-  if (!state.pending) return;
-  state.pendingMessage = message;
-  render();
 }
 
 function makeDefaultForm() {
@@ -159,7 +145,11 @@ function readLocalTransactions() {
 }
 
 function writeLocalTransactions(transactions) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
+  } catch (error) {
+    showToast("พื้นที่เก็บข้อมูลในเครื่องเต็มหรือถูกปิด", "error");
+  }
 }
 
 function normalizeTransactions(items) {
@@ -227,7 +217,6 @@ function setRoute(route) {
   state.lastError = "";
   if (route === "add" && !state.editingId) {
     state.form = makeDefaultForm();
-    state.ocrResult = null;
   }
   render();
 }
@@ -318,75 +307,6 @@ function apiRequest(action, payload = {}) {
   });
 }
 
-function apiBridgePost(action, payload = {}) {
-  if (!isApiConfigured()) {
-    return Promise.reject(new Error("ยังไม่ได้ใส่ Apps Script URL ใน script.js"));
-  }
-
-  return new Promise((resolve, reject) => {
-    const requestId = `bridge_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const iframe = document.createElement("iframe");
-    const form = document.createElement("form");
-    let settled = false;
-
-    iframe.name = requestId;
-    iframe.className = "hidden-frame";
-    form.className = "hidden-upload";
-    form.method = "POST";
-    form.action = CONFIG.API_URL.trim();
-    form.target = requestId;
-    form.enctype = "application/x-www-form-urlencoded";
-
-    const addInput = (name, value) => {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = name;
-      input.value = value;
-      form.appendChild(input);
-    };
-
-    addInput("action", action);
-    addInput("token", CONFIG.TOKEN || "");
-    addInput("payload", JSON.stringify(payload));
-    addInput("bridge", "1");
-    addInput("requestId", requestId);
-
-    const cleanup = () => {
-      window.removeEventListener("message", onMessage);
-      form.remove();
-      iframe.remove();
-      clearTimeout(timer);
-    };
-
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error("หมดเวลาการประมวลผล OCR"));
-    }, SLIP_OCR_TIMEOUT_MS);
-
-    const onMessage = event => {
-      const message = event.data;
-      if (!message || message.source !== "thai-expense-app" || message.requestId !== requestId) return;
-      if (settled) return;
-      settled = true;
-      cleanup();
-
-      const json = message.payload;
-      if (!json || json.ok === false) {
-        reject(new Error(json?.error || "ประมวลผล OCR ไม่สำเร็จ"));
-        return;
-      }
-      resolve(json);
-    };
-
-    window.addEventListener("message", onMessage);
-    document.body.appendChild(iframe);
-    document.body.appendChild(form);
-    form.submit();
-  });
-}
-
 function render() {
   updateNav();
   if (state.route === "home") app.innerHTML = renderHome();
@@ -432,7 +352,7 @@ function renderHome() {
   return `
     <section class="screen">
       <header class="topbar">
-        <div>
+        <div class="topbar-title-wrap">
           <h1 class="page-title">หน้าแรก</h1>
           <button class="month-pill" type="button" data-action="go-list" ${disabledAttr()}>${monthTitle(state.selectedMonth)}⌄</button>
         </div>
@@ -443,7 +363,7 @@ function renderHome() {
 
       <section class="card balance-card">
         <p class="balance-label">คงเหลือเดือนนี้</p>
-        <div class="balance-value">
+        <div class="balance-value ${summary.balance < 0 ? "negative" : ""}">
           <strong>${formatMoney(summary.balance)}</strong>
           <span>บาท</span>
         </div>
@@ -497,7 +417,7 @@ function renderNotice() {
         <div>
           <strong>ยังไม่ได้ฝัง Apps Script URL</strong>
           <div class="muted small">แก้ค่า CONFIG.API_URL และ CONFIG.TOKEN ในไฟล์ script.js แล้ว push ขึ้น GitHub</div>
-          <div class="muted small">ระหว่างนี้ระบบจะเก็บข้อมูลในเครื่องนี้ก่อน และยังสแกนสลิปไม่ได้</div>
+          <div class="muted small">ระหว่างนี้ระบบจะเก็บข้อมูลในเครื่องนี้ก่อน</div>
         </div>
       </section>
     `;
@@ -523,8 +443,6 @@ function renderAdd() {
         <button type="button" class="${form.type === "expense" ? "active expense" : ""}" data-type="expense" ${disabledAttr()}>รายจ่าย</button>
         <button type="button" class="${form.type === "income" ? "active income" : ""}" data-type="income" ${disabledAttr()}>รายรับ</button>
       </div>
-
-      ${renderSlipScanner(isEdit)}
 
       <section class="card amount-card">
         <label for="amountInput">จำนวนเงิน</label>
@@ -562,50 +480,6 @@ function renderAdd() {
         <button class="secondary-button" type="button" data-action="cancel-form" ${disabledAttr()}>ยกเลิก</button>
       </div>
     </section>
-  `;
-}
-
-function renderSlipScanner(isEdit) {
-  if (isEdit) {
-    return `
-      <section class="card slip-card">
-        <div class="slip-card-header">
-          <div class="slip-card-title"><span class="slip-icon">🧾</span><span>สแกนสลิป</span></div>
-        </div>
-        <div class="muted small">ใช้ได้เฉพาะตอนเพิ่มรายการใหม่เท่านั้น</div>
-      </section>
-    `;
-  }
-
-  const canScan = isApiConfigured();
-  return `
-    <section class="card slip-card">
-      <div class="slip-card-header">
-        <div>
-          <div class="slip-card-title"><span class="slip-icon">🧾</span><span>สแกนสลิปธนาคาร</span></div>
-          <div class="muted small">OCR จะเติมยอดเงิน วันที่ และหมายเหตุให้ตรวจสอบก่อนกดบันทึก</div>
-        </div>
-      </div>
-      <div class="slip-actions">
-        <button class="secondary-button ${loadingClass("ocr")}" type="button" data-action="scan-slip-gallery" ${!canScan || isBusy() ? "disabled" : ""}>${isPending("ocr") ? "กำลังอ่านสลิป" : "เลือกรูปจากอัลบั้ม"}</button>
-        <button class="secondary-button" type="button" data-action="scan-slip-camera" ${!canScan || isBusy() ? "disabled" : ""}>ถ่ายรูปสลิป</button>
-        ${!canScan ? `<div class="muted small slip-hint">ต้องใส่ Apps Script URL ใน script.js ก่อนจึงจะสแกนสลิปได้</div>` : `<div class="muted small slip-hint">เลือกรูปจากอัลบั้มจะไม่บังคับเปิดกล้อง ส่วนถ่ายรูปสลิปจะเปิดกล้องหลัง</div>`}
-      </div>
-      ${state.ocrResult ? renderOcrResult(state.ocrResult) : ""}
-    </section>
-  `;
-}
-
-function renderOcrResult(result) {
-  return `
-    <div class="ocr-result-card">
-      <strong>ผลจาก OCR</strong>
-      <div class="muted small">โปรดตรวจสอบข้อมูลก่อนกดบันทึก ระบบไม่บันทึกรูปสลิป</div>
-      <div class="ocr-result-grid">
-        <div class="ocr-result-item"><span>ยอดเงิน</span><strong>${result.amount ? formatMoney(result.amount) : "ไม่พบ"}</strong></div>
-        <div class="ocr-result-item"><span>วันที่</span><strong>${escapeHtml(result.date || "วันนี้")}</strong></div>
-      </div>
-    </div>
   `;
 }
 
@@ -722,7 +596,7 @@ function renderTransactionCard(tx, includeDate = false) {
   return `
     <button class="transaction-card" type="button" data-edit-id="${escapeHtml(tx.id)}" ${disabledAttr()}>
       <span class="tx-icon ${tx.type}">${meta.icon}</span>
-      <span>
+      <span class="tx-main">
         <span class="tx-title">${escapeHtml(transactionTitle(tx))}</span>
         <span class="tx-meta">${escapeHtml(transactionMeta(tx, includeDate))}</span>
       </span>
@@ -836,7 +710,6 @@ function startEdit(id) {
   const tx = state.transactions.find(item => item.id === id);
   if (!tx) return;
   state.editingId = id;
-  state.ocrResult = null;
   state.form = {
     type: tx.type,
     amount: String(tx.amount),
@@ -851,7 +724,6 @@ function startEdit(id) {
 function cancelForm() {
   if (isBusy()) return;
   state.editingId = null;
-  state.ocrResult = null;
   state.form = makeDefaultForm();
   state.route = "home";
   render();
@@ -903,7 +775,6 @@ async function saveTransaction() {
       }
       state.selectedMonth = transaction.date.slice(0, 7);
       state.editingId = null;
-      state.ocrResult = null;
       state.form = makeDefaultForm();
       state.route = "home";
       showToast("บันทึกสำเร็จ", "success");
@@ -927,7 +798,6 @@ async function deleteTransaction() {
       state.transactions = state.transactions.filter(tx => tx.id !== deletingId);
       writeLocalTransactions(state.transactions);
       state.editingId = null;
-      state.ocrResult = null;
       state.form = makeDefaultForm();
       state.route = "list";
       showToast("ลบรายการแล้ว", "success");
@@ -935,144 +805,6 @@ async function deleteTransaction() {
       showToast(`ลบไม่สำเร็จ: ${error.message}`, "error");
     }
   });
-}
-
-function chooseSlipImage(source) {
-  if (isBusy()) return;
-  if (!isApiConfigured()) {
-    showToast("ต้องใส่ Apps Script URL ใน script.js ก่อน", "error");
-    return;
-  }
-
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/png,image/jpeg,image/jpg";
-  if (source === "camera") {
-    input.setAttribute("capture", "environment");
-  }
-  input.className = "hidden-upload";
-  input.addEventListener("change", () => {
-    const file = input.files && input.files[0];
-    input.remove();
-    if (file) scanSlipImage(file);
-  });
-  document.body.appendChild(input);
-  input.click();
-}
-
-async function scanSlipImage(file) {
-  if (isBusy()) return;
-
-  if (!/^image\/(png|jpeg|jpg)$/i.test(file.type)) {
-    showToast("รองรับเฉพาะไฟล์ PNG หรือ JPEG", "error");
-    return;
-  }
-
-  await withPending("ocr", "กำลังเตรียมรูปสลิป", async () => {
-    try {
-      setPendingMessage("กำลังบีบอัดรูปสลิป");
-      const prepared = await prepareImageForOcr(file);
-      setPendingMessage(`กำลังอ่านสลิป (${prepared.width}×${prepared.height})`);
-      const result = await apiBridgePost("ocrSlip", prepared);
-      setPendingMessage("กำลังเติมข้อมูลจาก OCR");
-      const data = result.data || {};
-      applyOcrResult(data);
-      showToast("อ่านสลิปแล้ว โปรดตรวจสอบก่อนบันทึก", "success");
-    } catch (error) {
-      showToast(`อ่านสลิปไม่สำเร็จ: ${error.message}`, "error");
-    }
-  });
-}
-
-function prepareImageForOcr(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("อ่านไฟล์รูปไม่สำเร็จ"));
-    reader.onload = () => {
-      const image = new Image();
-      image.onerror = () => reject(new Error("เปิดรูปสลิปไม่สำเร็จ"));
-      image.onload = () => {
-        try {
-          let maxSide = MAX_SLIP_IMAGE_SIDE;
-          let quality = SLIP_IMAGE_QUALITY;
-          let encoded = null;
-
-          for (let attempt = 0; attempt < 8; attempt += 1) {
-            encoded = resizeAndEncodeImage(image, maxSide, quality);
-            if (encoded.base64.length <= MAX_SLIP_BASE64_LENGTH) break;
-            if (quality > MIN_SLIP_IMAGE_QUALITY) {
-              quality = Math.max(MIN_SLIP_IMAGE_QUALITY, quality - 0.08);
-            } else {
-              maxSide = Math.max(MIN_SLIP_IMAGE_SIDE, Math.round(maxSide * 0.84));
-            }
-            if (maxSide <= MIN_SLIP_IMAGE_SIDE && quality <= MIN_SLIP_IMAGE_QUALITY) break;
-          }
-
-          if (!encoded || !encoded.base64) {
-            reject(new Error("บีบอัดรูปไม่สำเร็จ"));
-            return;
-          }
-
-          resolve({
-            imageBase64: encoded.base64,
-            mimeType: "image/jpeg",
-            fileName: file.name || "slip.jpg",
-            originalSize: file.size,
-            compressedSizeApprox: Math.round(encoded.base64.length * 0.75),
-            width: encoded.width,
-            height: encoded.height,
-            quality: encoded.quality
-          });
-        } catch (error) {
-          reject(new Error("เตรียมรูปสลิปไม่สำเร็จ"));
-        }
-      };
-      image.src = String(reader.result || "");
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function resizeAndEncodeImage(image, maxSide, quality) {
-  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d", { alpha: false });
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, width, height);
-  ctx.drawImage(image, 0, 0, width, height);
-  const dataUrl = canvas.toDataURL("image/jpeg", quality);
-  return {
-    base64: dataUrl.split(",")[1] || "",
-    width,
-    height,
-    quality
-  };
-}
-
-function applyOcrResult(data) {
-  const amount = Number(data.amount) || 0;
-  const date = String(data.date || "").slice(0, 10);
-  const note = String(data.note || data.merchant || "สลิปธนาคาร").slice(0, 120);
-
-  state.editingId = null;
-  state.form.type = "expense";
-  state.form.category = "อื่นๆ";
-  state.form.amount = amount > 0 ? String(amount) : "";
-  state.form.date = date || formatDateInput(new Date());
-  state.form.note = note;
-  state.ocrResult = {
-    amount,
-    date: state.form.date,
-    merchant: data.merchant || "",
-    note
-  };
-  state.route = "add";
 }
 
 function showToast(message, type = "") {
@@ -1099,7 +831,6 @@ document.addEventListener("click", async event => {
     const type = typeButton.dataset.type;
     state.form.type = type;
     state.form.category = "อื่นๆ";
-    state.ocrResult = null;
     render();
     return;
   }
@@ -1128,15 +859,12 @@ document.addEventListener("click", async event => {
   if (action === "cancel-form") cancelForm();
   if (action === "save-transaction") await saveTransaction();
   if (action === "delete-transaction") await deleteTransaction();
-  if (action === "scan-slip-gallery") chooseSlipImage("gallery");
-  if (action === "scan-slip-camera") chooseSlipImage("camera");
 });
 
 document.addEventListener("input", event => {
   const input = event.target.closest("[data-form]");
   if (!input || isBusy()) return;
   state.form[input.dataset.form] = input.value;
-  if (input.dataset.form !== "note") state.ocrResult = null;
 });
 
 loadData();

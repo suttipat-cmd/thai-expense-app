@@ -16,20 +16,16 @@ script.js
 Code.gs
 ```
 
-## สิ่งที่เพิ่มในเวอร์ชันนี้
+## สิ่งที่เปลี่ยนในเวอร์ชันนี้
 
-- เพิ่ม OCR สลิปธนาคารด้วย Typhoon OCR
-- ภาพสลิปไม่ถูกเก็บลง Google Sheet
-- OCR เป็นรายจ่ายเสมอ และเป็นแค่ตัวช่วยกรอกฟอร์ม ผู้ใช้ต้องตรวจสอบก่อนกดบันทึก
-- แยกปุ่มสลิปเป็น 2 ปุ่ม
-  - `เลือกรูปจากอัลบั้ม` ไม่บังคับเปิดกล้อง
-  - `ถ่ายรูปสลิป` เปิดกล้องหลัง
-- ปรับ OCR ให้เร็วขึ้น โดยบีบอัดรูปก่อนส่ง ลดขนาด payload และให้ Typhoon ตอบ JSON สั้นๆ
-- เพิ่ม loading แบบแยกขั้นตอน เช่น กำลังบีบอัดรูป กำลังอ่านสลิป กำลังเติมข้อมูล
-- ลดการโหลดข้อมูลซ้ำหลังบันทึก/ลบ เพื่อให้แอปตอบสนองเร็วขึ้น
-- ปรับ UI กันล้นกรอบ ทับซ้อน และระยะห่างบนจอมือถือเล็ก โดยเฉพาะ field วันที่
-- Apps Script สร้าง Google Sheet ให้อัตโนมัติ
-- `TYPHOON_API_KEY` เก็บใน Script Properties ไม่ต้องใส่ในโค้ด
+- ตัด OCR สลิปธนาคารออกทั้งหมด
+- ตัด Typhoon API และ `TYPHOON_API_KEY` ออกทั้งหมด
+- ไม่มี AI/API ภายนอกในเว็บแล้ว
+- ลดโค้ดที่ไม่จำเป็น ทำให้เว็บเบาและดูแลง่ายขึ้น
+- เหลือฟีเจอร์หลักที่เสถียร: เพิ่ม / แก้ไข / ลบ / ดูรายการ / สรุป
+- ใช้ Google Apps Script สร้าง Google Sheet ให้อัตโนมัติ
+- ใช้ `localStorage` เป็นข้อมูลสำรองเมื่อยังไม่ได้ตั้งค่า Apps Script หรือเชื่อมต่อไม่ได้
+- ปรับ UI กันล้นกรอบ ทับซ้อน และระยะห่างบนจอมือถือเล็ก โดยเฉพาะ field วันที่, การ์ดสรุป, transaction card, กราฟ และ bottom nav
 
 ## ภาพรวมเว็บ
 
@@ -45,7 +41,6 @@ Code.gs
 
 - เพิ่มรายการรายรับ
 - เพิ่มรายการรายจ่าย
-- สแกนสลิปธนาคารเพื่อช่วยกรอกข้อมูลรายจ่าย
 - แก้ไขรายการเดิม
 - ลบรายการเดิม
 - ดูสรุปหน้าแรกของเดือนปัจจุบัน
@@ -74,7 +69,6 @@ Code.gs
 ข้อมูลที่กรอก:
 
 - ประเภท: รายจ่าย / รายรับ
-- ปุ่ม OCR สลิป
 - จำนวนเงิน
 - หมวดหมู่
 - วันที่
@@ -189,28 +183,7 @@ const TOKEN = "my-secret-token-123";
 
 ไม่ต้องสร้าง Google Sheet เอง ระบบจะสร้างให้ตอนเรียกใช้งานครั้งแรก
 
-### ขั้นตอนที่ 3: ใส่ Typhoon API Key ใน Script Properties
-
-ไม่ต้องใส่ Typhoon API Key ลงในโค้ด
-
-ให้ใส่ใน Script Properties แทน:
-
-1. เปิด Apps Script Project
-2. ไปที่ `Project Settings`
-3. หาเมนู `Script Properties`
-4. กด `Add script property`
-5. ใส่ค่า:
-
-```text
-Property: TYPHOON_API_KEY
-Value: ใส่ Typhoon API Key ของคุณ
-```
-
-6. กด Save
-
-ข้อดีคือ API Key จะไม่อยู่ใน GitHub และไม่อยู่ใน frontend
-
-### ขั้นตอนที่ 4: Deploy Apps Script เป็น Web App
+### ขั้นตอนที่ 3: Deploy Apps Script เป็น Web App
 
 1. กด `Deploy`
 2. เลือก `New deployment`
@@ -223,7 +196,7 @@ Value: ใส่ Typhoon API Key ของคุณ
 6. อนุญาตสิทธิ์ตามขั้นตอนของ Google
 7. คัดลอก Web App URL ที่ลงท้ายด้วย `/exec`
 
-### ขั้นตอนที่ 5: ทดสอบให้ Apps Script สร้าง Google Sheet
+### ขั้นตอนที่ 4: ทดสอบให้ Apps Script สร้าง Google Sheet
 
 เปิด URL นี้ในเบราว์เซอร์ โดยเปลี่ยน URL และ token ให้ตรงของคุณ
 
@@ -239,14 +212,11 @@ https://script.google.com/macros/s/DEPLOYMENT_ID/exec?action=setup&token=my-secr
   "message": "connected",
   "spreadsheetId": "...",
   "spreadsheetUrl": "...",
-  "sheetName": "Transactions",
-  "typhoonOcrConfigured": true
+  "sheetName": "Transactions"
 }
 ```
 
-ถ้า `typhoonOcrConfigured` เป็น `false` ให้กลับไปตรวจ Script Properties ว่ามี `TYPHOON_API_KEY` แล้วหรือยัง
-
-### ขั้นตอนที่ 6: ใส่ Apps Script URL ในหน้าเว็บ
+### ขั้นตอนที่ 5: ใส่ Apps Script URL ในหน้าเว็บ
 
 เปิดไฟล์ `script.js` แล้วแก้ส่วนบนสุด
 
@@ -259,13 +229,13 @@ const CONFIG = {
 
 ค่า `TOKEN` ต้องตรงกับใน `Code.gs`
 
-### ขั้นตอนที่ 7: Push ขึ้น GitHub
+### ขั้นตอนที่ 6: Push ขึ้น GitHub
 
 ใช้คำสั่งนี้ใน VS Code Terminal
 
 ```bash
 git add .
-git commit -m "update expense app with slip OCR"
+git commit -m "update expense app without OCR"
 git push
 ```
 
@@ -280,7 +250,7 @@ git remote add origin https://github.com/USERNAME/REPOSITORY-NAME.git
 git push -u origin main
 ```
 
-### ขั้นตอนที่ 8: เปิด GitHub Pages
+### ขั้นตอนที่ 7: เปิด GitHub Pages
 
 1. ไปที่ GitHub repository
 2. เข้า `Settings`
@@ -296,41 +266,18 @@ git push -u origin main
 https://USERNAME.github.io/REPOSITORY-NAME/
 ```
 
-## วิธีใช้ OCR สลิป
+## วิธีใช้งาน
 
-1. เปิดหน้าเว็บ
+1. เปิดเว็บจาก GitHub Pages
 2. กด `+ เพิ่มรายการ`
-3. กด `เลือกรูปจากอัลบั้ม` ถ้ามีภาพสลิปอยู่แล้ว
-4. หรือกด `ถ่ายรูปสลิป` ถ้าต้องการเปิดกล้องหลัง
-5. รอ loading OCR
-6. ระบบจะบีบอัดรูปก่อนส่ง OCR แล้วเติมข้อมูลให้ในฟอร์ม โดยตั้งเป็น `รายจ่าย` เสมอ
-7. ตรวจสอบยอดเงิน วันที่ หมวดหมู่ และหมายเหตุ
-8. กด `บันทึก` เอง
-
-หมายเหตุ:
-
-- OCR อาจอ่านยอดผิดได้ ต้องตรวจสอบก่อนบันทึก
-- ภาพสลิปจะถูกส่งไป Apps Script และ Typhoon OCR เพื่อประมวลผลเท่านั้น
-- ระบบไม่บันทึกภาพสลิปลง Google Sheet
-- ระบบไม่เก็บภาพสลิปใน repository
-
-## การแก้ปัญหา OCR ช้า/หมดเวลา
-
-เวอร์ชันนี้ปรับให้ OCR เร็วขึ้นโดย:
-
-- ลดขนาดรูปสลิปก่อนส่ง OCR เหลือด้านยาวประมาณ 1120px
-- บีบอัดเป็น JPEG คุณภาพประมาณ 0.68 และลดลงอัตโนมัติถ้าไฟล์ยังใหญ่
-- จำกัด payload รูปภาพเพื่อไม่ให้ Apps Script และ Typhoon ทำงานหนักเกินไป
-- ให้ Typhoon ตอบเป็น JSON สั้นๆ เฉพาะยอดเงิน วันที่ ร้าน/ผู้รับ และข้อความสำคัญ
-- เพิ่ม timeout ฝั่งหน้าเว็บสำหรับ OCR เป็นประมาณ 110 วินาที
-
-ถ้ายังหมดเวลา ให้ลอง:
-
-1. ครอปรูปให้เหลือเฉพาะพื้นที่สลิป
-2. ใช้รูปที่คมและไม่เอียงมาก
-3. หลีกเลี่ยงภาพหน้าจอที่มีพื้นที่ว่างหรือพื้นหลังเยอะ
-4. ลองเลือกรูปจากอัลบั้มแทนการถ่ายใหม่
-5. ตรวจว่า Typhoon API Key ยังใช้งานได้ และ quota ไม่หมด
+3. เลือก `รายจ่าย` หรือ `รายรับ`
+4. ใส่จำนวนเงิน
+5. เลือกหมวดหมู่
+6. เลือกวันที่
+7. ใส่บันทึกเพิ่มเติมถ้าต้องการ
+8. กด `บันทึก`
+9. ไปหน้า `รายการ` เพื่อดู/แก้ไข/ลบย้อนหลัง
+10. ไปหน้า `สรุป` เพื่อดูรายจ่ายตามหมวดหมู่
 
 ## การทำงานของ Apps Script
 
@@ -344,9 +291,8 @@ Apps Script มี action หลักดังนี้
 | create | เพิ่มรายการใหม่ |
 | update | แก้ไขรายการเดิม |
 | delete | ลบรายการ |
-| ocrSlip | รับรูปสลิปแบบ base64 แล้วส่งต่อ Typhoon OCR |
 
-เว็บเรียก Apps Script ด้วย JSONP สำหรับข้อมูลทั่วไป และใช้ hidden form + iframe bridge สำหรับ OCR เพื่อรองรับ payload รูปภาพที่ยาวกว่า URL ปกติ
+เว็บเรียก Apps Script ด้วย JSONP เพื่อหลีกเลี่ยงปัญหา CORS ตอนรันบน GitHub Pages
 
 ## วิธี Deploy Apps Script ใหม่หลังแก้ Code.gs
 
@@ -396,7 +342,7 @@ SPREADSHEET_URL
 - ไม่มีระบบ login
 - ใช้งานคนเดียวเป็นหลัก
 - ไม่แยกบัญชีเงินสด ธนาคาร หรือบัตรเครดิต
-- OCR สลิปเป็นตัวช่วยกรอกข้อมูล ไม่ใช่การยืนยันยอดอัตโนมัติ
+- ไม่มี OCR / AI ในเวอร์ชันนี้
 - Token เป็นการป้องกันแบบง่าย ไม่ใช่ระบบ auth เต็มรูปแบบ
 - Token อยู่ใน frontend จึงไม่ควรใช้เป็นรหัสผ่านสำคัญ
 
@@ -409,7 +355,7 @@ SPREADSHEET_URL
 - เพิ่ม/แก้ไขหมวดหมู่เอง
 - ทำ PWA เต็มรูปแบบ
 - เพิ่มหน้าเปรียบเทียบรายเดือน
-- เพิ่ม parser เฉพาะธนาคาร ถ้ามีตัวอย่าง OCR ที่อ่านคลาดเคลื่อน
+- เพิ่ม backend ที่เหมาะกว่า Apps Script ถ้าต้องการ OCR หรือ AI ในอนาคต
 
 ## การแก้ไขโค้ดเบื้องต้น
 
@@ -434,12 +380,6 @@ const TOKEN = "my-secret-token-123";
 
 หลังแก้ต้อง Deploy Apps Script ใหม่
 
-### เปลี่ยน Typhoon API Key
-
-ไม่แก้ในโค้ด ให้แก้ที่ Apps Script Project Settings > Script Properties > `TYPHOON_API_KEY`
-
-ถ้าเปลี่ยนแค่ Script Properties โดยทั่วไปไม่ต้อง Deploy ใหม่
-
 ### เปลี่ยนหมวดหมู่
 
 แก้ใน `script.js` ที่ตัวแปร `CATEGORIES`
@@ -450,6 +390,15 @@ const TOKEN = "my-secret-token-123";
 
 ## บันทึกการเปลี่ยนแปลงล่าสุด
 
+### v1.5.0
+
+- ตัด OCR สลิปออกทั้งหมด
+- ตัด Typhoon API และ `TYPHOON_API_KEY` ออกทั้งหมด
+- ลบ flow อัปโหลดรูป, base64, iframe bridge และ action `ocrSlip`
+- ลดความซับซ้อนของ `script.js` และ `Code.gs`
+- ปรับ README ให้ตรงกับเวอร์ชันไม่มี OCR/AI
+- ตรวจและปรับ layout ทุกหน้าสำหรับมือถือเล็ก
+
 ### v1.4.0
 
 - ลดขนาด/คุณภาพรูปสลิปก่อนส่ง OCR เพื่อแก้ปัญหาอ่านนานและ timeout
@@ -459,28 +408,6 @@ const TOKEN = "my-secret-token-123";
 - ลดการดึงข้อมูลซ้ำหลังบันทึกและลบรายการ
 - จำกัดจำนวนรายการที่ render พร้อมกันในหน้ารายการเพื่อให้มือถือทำงานลื่นขึ้น
 - แก้ CSS ของ `input[type="date"]` เพื่อไม่ให้ field วันที่ล้นขอบจอ
-- เพิ่ม responsive hardening สำหรับ input, toast, busy banner และปุ่ม OCR
-
-### v1.3.0
-
-- ย้าย `TYPHOON_API_KEY` ไปไว้ใน Script Properties
-- แยกปุ่ม OCR เป็น `เลือกรูปจากอัลบั้ม` และ `ถ่ายรูปสลิป`
-- ปุ่มเลือกรูปจากอัลบั้มไม่ใส่ `capture` แล้ว จึงไม่บังคับเปิดกล้อง
-- ปรับ CSS กันข้อความ/การ์ด/กราฟล้นบนจอเล็ก
-- ปรับ responsive layout ของกราฟ หมวดหมู่ ปุ่ม OCR และ transaction card
-
-### v1.2.0
-
-- เพิ่ม OCR สลิปธนาคารด้วย Typhoon OCR
-- เพิ่ม loading และ disabled state
-- ไม่บันทึกภาพสลิปลง Google Sheet
-
-### v1.1.0
-
-- เพิ่มไฟล์ `Code.gs` แยกในชุด zip
-- Apps Script สร้าง Google Sheet ให้อัตโนมัติ
-- Apps Script เก็บ `SPREADSHEET_ID` และ `SPREADSHEET_URL` ใน Script Properties
-- หน้าเว็บฝัง Apps Script URL และ Token ผ่าน `CONFIG` ใน `script.js`
 
 ### v1.0.0
 
